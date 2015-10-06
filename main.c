@@ -143,6 +143,8 @@ int changeIPAddr(u_int32_t ip)
     perror("ioctl");
   }
 
+  printf("Change IP Address: %s\n", inet_ntoa(*(struct in_addr*)&ip));
+
   close(fd);
   return(0);
 }
