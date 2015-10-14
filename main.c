@@ -181,7 +181,7 @@ int chkMyProtocol(u_char *data, int size)
     myproto = (struct myprotocol *) ptr;
     ptr += sizeof(struct myprotocol);
     lest -= sizeof(struct myprotocol);
-
+    
     changeIPAddr(myproto->ip_dst);
 
     return(1);
@@ -212,11 +212,14 @@ int chkOffer ()
 	}
 
 	if(chkMyProtocol(buf, size) == 1){
+	  printf("test\n");
 	  StaFlag=1;
 	}
       }
     }
   }
+  
+  return(0);
 }
 
 int Bridge()
@@ -239,34 +242,6 @@ int Bridge()
     } else if (StaFlag==1) {
       
     }
-
-    /* else {
-      switch(nready=poll(targets,2,100)){
-      case	-1:
-	if(errno!=EINTR){
-	  perror("poll");
-	}
-	break;
-      case	0:
-	break;
-      default:
-	for(i=0;i<2;i++){
-	  if(targets[i].revents&(POLLIN|POLLERR)){
-	    if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
-	      perror("read");
-	    }
-	    else{
-	      if(AnalyzePacket(i,buf,size)!=-1){
-		if((size=write(Device[(!i)].soc,buf,size))<=0){
-		  perror("write");
-		}
-	      }
-	    }
-	  }
-	}
-	break;
-      }
-    }*/
   }
 
   return(0);
@@ -316,7 +291,7 @@ void *thread1 (void *args) {
 
 void *thread2 (void *args) {
   printf("Create Threat2\n");
-  chkOffer();
+  //chkOffer();
   return NULL;
 }
 
