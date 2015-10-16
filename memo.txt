@@ -1,0 +1,5 @@
+--- Client ---
+
+
+--- Host -----
+route del default gw 192.168.20.1
