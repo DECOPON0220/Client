@@ -25,6 +25,16 @@
 const char *NameDev1="wlan1";
 const char *NameDev2="eth0";
 
+// ARP CACHE
+#define xstr(s) str(s)
+#define str(s) #s
+#define ARP_CACHE       "/proc/net/arp"
+#define ARP_STRING_LEN  1023
+#define ARP_BUFFER_LEN  (ARP_STRING_LEN + 1)
+#define ARP_LINE_FORMAT "%" xstr(ARP_STRING_LEN) "s %*s %*s " \
+                        "%" xstr(ARP_STRING_LEN) "s %*s " \
+                        "%" xstr(ARP_STRING_LEN) "s"
+
 
 
 typedef struct	{
@@ -37,6 +47,7 @@ int EndFlag=0;
 int StatusFlag=1;   // 0: Stop 1: Discover 2:Request
 
 char hostMacAddr[SIZE_MAC];
+char hostIpAddr[SIZE_IP];
 char dev1MacAddr[SIZE_MAC];
 char dev2MacAddr[SIZE_MAC];
 char dev1IpAddr[SIZE_IP];
@@ -111,35 +122,14 @@ int sendMyProtocol(int deviceNo)
       create_myprotocol(Device[deviceNo].soc, dev1MacAddr, dmac, sip, dip, DISCOVER);
       
       usleep(10000 * 100);
+    } else if(StatusFlag==2){
+      printf("Send Approval Pakcet\n");
+      
+      create_myprotocol(Device[deviceNo].soc, dev1MacAddr, hostMacAddr, dev1IpAddr, hostIpAddr, APPROVAL);
+      StatusFlag=3;
     }
   }
-
-  
     
-  return(0);
-}
-
-int AnalyzePacket(int deviceNo,u_char *data,int size)
-{
-  u_char	*ptr;
-  int	lest;
-  struct ether_header	*eh;
-
-  ptr=data;
-  lest=size;
-
-  if(lest<sizeof(struct ether_header)){
-    DebugPrintf("[%d]:lest(%d)<sizeof(struct ether_header)\n",deviceNo,lest);
-    return(-1);
-  }
-  eh=(struct ether_header *)ptr;
-  ptr+=sizeof(struct ether_header);
-  lest-=sizeof(struct ether_header);
-  DebugPrintf("[%d]",deviceNo);
-  if(DebugOut){
-    PrintEtherHeader(eh,stderr);
-  }
-
   return(0);
 }
 
@@ -165,86 +155,115 @@ int changeIPAddr(const char *device, u_int32_t ip)
   return(0);
 }
 
-/*
-int chkMyProtocol(u_char *data, int size)
+int AnalyzePacket(int deviceNo,u_char *data,int size)
 {
-  u_char *ptr;
-  int lest;
-  struct ether_header *eh;
-  struct myprotocol *myproto;
+  u_char	*ptr;
+  int	lest;
+  struct ether_header	*eh;
+
   ptr=data;
   lest=size;
-  char sMACaddr[18];
-  char dMACaddr[18];
-  char myMACaddr[18];
-  u_char mymac_addr[6];
-  int flg=0;
 
+  if(lest<sizeof(struct ether_header)){
+    DebugPrintf("[%d]:lest(%d)<sizeof(struct ether_header)\n",deviceNo,lest);
+    return(-1);
+  }
   eh=(struct ether_header *)ptr;
   ptr+=sizeof(struct ether_header);
   lest-=sizeof(struct ether_header);
+  DebugPrintf("[%d]",deviceNo);
+  if(DebugOut){
+    PrintEtherHeader(eh,stderr);
+  }
 
-  my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
-  my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
-
-  int i;
-  my_ether_aton_r(dev1MacAddr, mymac_addr);
-  my_ether_ntoa_r(mymac_addr, myMACaddr, sizeof(sMACaddr));
-
-  if((strncmp(dMACaddr, myMACaddr, 18) == 0) &&
-     (ntohs(eh->ether_type) == OFFER)) {
-    printf("Receive Offer Packet\n");
-
-    myproto = (struct myprotocol *) ptr;
-    ptr += sizeof(struct myprotocol);
-    lest -= sizeof(struct myprotocol);
+  // Check My Protocol
+  if(StatusFlag==1) {
+    char sMACaddr[18];
+    char dMACaddr[18];
     
-    changeIPAddr(NameDev1, myproto->ip_dst);
+    my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
+    my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
+    memcpy(hostMacAddr, sMACaddr, sizeof(sMACaddr));
 
-    return(1);
+    if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0 &&
+       ntohs(eh->ether_type)==OFFER){
+      struct myprotocol *myproto;
+      
+      printf("Recieve Offer Packet\n");
+      myproto=(struct myprotocol *) ptr;
+      ptr+=sizeof(struct myprotocol);
+      lest-=sizeof(struct myprotocol);
+
+      if(ntohs(myproto->type)==OFFER){
+        memcpy(dev1IpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
+	memcpy(hostIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	
+	if(changeIPAddr(NameDev1, myproto->ip_dst)==0){
+	  StatusFlag=2;
+	  return(-1);
+	}
+      }
+    }
   }
 
   return(0);
 }
 
-int chkOffer ()
+int Bridge()
 {
-  struct pollfd target[1];
-  int size;
+  struct pollfd targets[2];
+  int nready,i,size;
   u_char buf[2048];
 
-  target[0].fd=Device[0].soc;
-  target[0].events=POLLIN|POLLERR;
-  
+  targets[0].fd=Device[0].soc;
+  targets[0].events=POLLIN|POLLERR;
+  targets[1].fd=Device[1].soc;
+  targets[1].events=POLLIN|POLLERR;
+
   while(EndFlag==0){
-    if(poll(target,1,100)<0){
+    if(poll(targets,1,100)<0){
       if(errno!=EINTR){
 	perror("poll");
       }
       break;
     } else {
-      if(target[0].revents&(POLLIN|POLLERR)){
+      if(targets[0].revents&(POLLIN|POLLERR)){
 	if((size=read(Device[0].soc,buf,sizeof(buf)))<=0){
 	  perror("read");
 	}
 
-	if(chkMyProtocol(buf, size) == 1){
-	  printf("test\n");
-	  StaFlag=1;
-	}
+	// Check My Protocol
+        AnalyzePacket(0, buf, size);
       }
     }
-  }
-  
-  return(0);
-}
-*/
-
-int Bridge()
-{
-
-  while(EndFlag==0){
-    
+    /*
+    switch(nready=poll(targets,2,100)){
+    case	-1:
+      if(errno!=EINTR){
+	perror("poll");
+      }
+      break;
+    case	0:
+      break;
+    default:
+      for(i=0;i<2;i++){
+	if(targets[i].revents&(POLLIN|POLLERR)){
+	  if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
+	    perror("read");
+	  }
+	  else{
+	    //if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
+	    if(AnalyzePacket(i,buf,size)!=-1){
+	      if((size=write(Device[(!i)].soc,buf,size))<=0){
+		perror("write");
+	      }
+	    }
+	  }
+	}
+      }
+      break;
+    }
+    */
   }
   return(0);
 }
@@ -301,7 +320,7 @@ void getIfIp (const char *device, char *ipAddr)
 
 void *thread1 (void *args) {
   printf("Create Threat1\n");
-  //Bridge();
+  Bridge();
   return NULL;
 }
 
@@ -311,9 +330,37 @@ void *thread2 (void *args) {
   return NULL;
 }
 
+/*
+int getArpCache ()
+{
+  FILE *arpCache = fopen(ARP_CACHE, "r");
+  if(!arpCache){
+    perror("Arp Cache: Failed to open file \"" ARP_CACHE "\"");
+    return (0);
+  }
+  
+  // Ignore the first line, which contains the header
+  char header[ARP_BUFFER_LEN];
+  if(!fgets(header, sizeof(header), arpCache)){
+    return(0);
+  }
+
+  char ipAddr[ARP_BUFFER_LEN], hwAddr[ARP_BUFFER_LEN], device[ARP_BUFFER_LEN];
+  int count = 0;
+  while(3 == fscanf(arpCache, ARP_LINE_FORMAT, ipAddr, hwAddr, device)){
+    printf("%03d: Mac Address of [%s] on [%s] is \"%s\"\n",
+	   ++count, ipAddr, device, hwAddr);
+  }
+  fclose(arpCache);
+  return(0);
+}
+*/
+
 int main(int argc,char *argv[],char *envp[])
 {
   pthread_t th1, th2;
+
+  //getArpCache();
 
   // Get Interface Infomation
   getIfMac(NameDev1, dev1MacAddr);
