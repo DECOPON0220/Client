@@ -15,7 +15,11 @@
 #include <netinet/in.h>
 #include <net/if.h>
 #include <pthread.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include "myprotocol.h"
+#include "checksum.h"
 
 #define MAXSIZE 8192
 #define SIZE_MAC 18
@@ -26,6 +30,7 @@ const char *NameDev1="wlan1";
 const char *NameDev2="eth0";
 
 // ARP CACHE
+/*
 #define xstr(s) str(s)
 #define str(s) #s
 #define ARP_CACHE       "/proc/net/arp"
@@ -34,6 +39,7 @@ const char *NameDev2="eth0";
 #define ARP_LINE_FORMAT "%" xstr(ARP_STRING_LEN) "s %*s %*s " \
                         "%" xstr(ARP_STRING_LEN) "s %*s " \
                         "%" xstr(ARP_STRING_LEN) "s"
+*/
 
 
 
@@ -44,14 +50,17 @@ DEVICE	Device[2];
 
 int DebugOut=0;
 int EndFlag=0;
-int StatusFlag=1;   // 0: Stop 1: Discover 2:Request
+int StatusFlag=1;
+int ClientMacFlag=0;
 
 char hostMacAddr[SIZE_MAC];
 char hostIpAddr[SIZE_IP];
+char cliMacAddr[SIZE_MAC];
+char *cliIpAddr="192.168.100.11";
 char dev1MacAddr[SIZE_MAC];
 char dev2MacAddr[SIZE_MAC];
 char dev1IpAddr[SIZE_IP];
-char dev2IpAddr[SIZE_IP];
+char *dev2IpAddr="192.168.100.1";
 
 int DebugPrintf(char *fmt,...)
 {
@@ -133,7 +142,7 @@ int sendMyProtocol(int deviceNo)
   return(0);
 }
 
-int changeIPAddr(const char *device, u_int32_t ip)
+int changeIpAddr(const char *device, u_int32_t ip)
 {
   int fd;
   struct ifreq ifr;
@@ -176,6 +185,22 @@ int AnalyzePacket(int deviceNo,u_char *data,int size)
     PrintEtherHeader(eh,stderr);
   }
 
+  // Get Client Mac Address
+  if(ClientMacFlag==0){
+    if(ntohs(eh->ether_type)==ETHERTYPE_IP){
+      struct iphdr *iphdr;
+      
+      iphdr=(struct iphdr *)ptr;
+      ptr+=sizeof(struct iphdr);
+      lest-=sizeof(struct iphdr);
+
+      if(strncmp(cliIpAddr, inet_ntoa(*(struct in_addr *)&iphdr->saddr), SIZE_IP)==0){
+        my_ether_ntoa_r(eh->ether_shost, cliMacAddr, sizeof(cliMacAddr));	
+	ClientMacFlag=1;
+      }
+    }
+  }
+
   // Check My Protocol
   if(StatusFlag==1) {
     char sMACaddr[18];
@@ -198,10 +223,152 @@ int AnalyzePacket(int deviceNo,u_char *data,int size)
         memcpy(dev1IpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
 	memcpy(hostIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
 	
-	if(changeIPAddr(NameDev1, myproto->ip_dst)==0){
+	if(changeIpAddr(NameDev1, myproto->ip_dst)==0){
 	  StatusFlag=2;
 	  return(-1);
 	}
+      }
+    }
+  }
+
+  return(0);
+}
+
+int RewritePacket (int deviceNo, u_char *data, int size)
+{
+  u_char *ptr;
+  struct ether_header *eh;
+  int lest, len;
+  
+  ptr=data;
+  lest=size;
+  
+  if(lest<sizeof(struct ether_header)){
+    DebugPrintf("[%d]:lest(%d)<sizeof(struct ether_header)\n",deviceNo,lest);
+    return(-1);
+  }
+
+  eh=(struct ether_header *)ptr;
+  ptr+=sizeof(struct ether_header);
+  lest-=sizeof(struct ether_header);
+
+  char dMACaddr[18];
+  char sMACaddr[18];
+  
+  // Get dMAC, sMAC
+  my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
+  my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
+  
+  // wirelessNIC -> physicalNIC
+  if(deviceNo==0){
+    my_ether_aton_r(dev2MacAddr, eh->ether_shost);
+    if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0){
+      my_ether_aton_r(cliMacAddr, eh->ether_dhost);
+    }
+
+    // Case: IP
+    if (ntohs(eh->ether_type)==ETHERTYPE_IP) {
+      struct iphdr *iphdr;
+      u_char option[1500];
+      int optLen;
+	
+      iphdr=(struct iphdr *)ptr;
+      ptr+=sizeof(struct iphdr);
+      lest-=sizeof(struct iphdr);
+      
+      optLen=iphdr->ihl*4-sizeof(struct iphdr);
+      
+      if(optLen>0){
+	memcpy(option, ptr, optLen);
+	ptr+=optLen;
+	lest-=optLen;
+      }
+      
+      // Rewrite IP Address
+      if(iphdr->saddr==inet_addr(hostIpAddr)){
+	iphdr->saddr=inet_addr(dev2IpAddr);
+      }
+      if(iphdr->daddr==inet_addr(dev1IpAddr)){
+	iphdr->daddr=inet_addr(cliIpAddr);
+      }
+      
+      iphdr->check=0;
+      iphdr->check=calcChecksum2((u_char *)iphdr, sizeof(struct iphdr), option, optLen);
+
+      // Case : TCP
+      if(iphdr->protocol==IPPROTO_TCP){
+	struct tcphdr *tcphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	tcphdr=(struct tcphdr *)ptr;
+
+	tcphdr->check=0;
+	tcphdr->check=checkIPDATAchecksum(iphdr, ptr, len);
+      }
+      // Case : UDP
+      if(iphdr->protocol==IPPROTO_UDP){
+	struct udphdr* udphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	udphdr=(struct udphdr *)ptr;
+	udphdr->check=0;
+      }
+    }
+
+    // physicalNIC -> wirelessNIC
+  } else if(deviceNo==1){
+    // Rewrite MAC Address
+    my_ether_aton_r(dev1MacAddr, eh->ether_shost);
+    if(strncmp(dMACaddr, dev2MacAddr, SIZE_MAC)==0){
+      my_ether_aton_r(hostMacAddr,eh->ether_dhost);
+    }
+
+    // Case: IP
+    if (ntohs(eh->ether_type)==ETHERTYPE_IP) {
+      struct iphdr *iphdr;
+      u_char option[1500];
+      int optLen;
+	
+      iphdr=(struct iphdr *)ptr;
+      ptr+=sizeof(struct iphdr);
+      lest-=sizeof(struct iphdr);
+      
+      optLen=iphdr->ihl*4-sizeof(struct iphdr);
+      
+      if(optLen>0){
+	memcpy(option, ptr, optLen);
+	ptr+=optLen;
+	lest-=optLen;
+      }
+      
+      // Rewrite IP Address
+      if(iphdr->saddr==inet_addr(cliIpAddr)){
+	iphdr->saddr=inet_addr(dev1IpAddr);
+      }
+      if(iphdr->daddr==inet_addr(dev2IpAddr)){
+	iphdr->daddr=inet_addr(hostIpAddr);
+      }
+       
+      iphdr->check=0;
+      iphdr->check=calcChecksum2((u_char *)iphdr, sizeof(struct iphdr), option, optLen);
+
+      // Case : TCP
+      if(iphdr->protocol==IPPROTO_TCP){
+	struct tcphdr *tcphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	tcphdr=(struct tcphdr *)ptr;
+
+	tcphdr->check=0;
+	tcphdr->check=checkIPDATAchecksum(iphdr, ptr, len);
+      }
+      // Case : UDP
+      if(iphdr->protocol==IPPROTO_UDP){
+	struct udphdr* udphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	udphdr=(struct udphdr *)ptr;
+	udphdr->check=0;
       }
     }
   }
@@ -221,22 +388,6 @@ int Bridge()
   targets[1].events=POLLIN|POLLERR;
 
   while(EndFlag==0){
-    if(poll(targets,1,100)<0){
-      if(errno!=EINTR){
-	perror("poll");
-      }
-      break;
-    } else {
-      if(targets[0].revents&(POLLIN|POLLERR)){
-	if((size=read(Device[0].soc,buf,sizeof(buf)))<=0){
-	  perror("read");
-	}
-
-	// Check My Protocol
-        AnalyzePacket(0, buf, size);
-      }
-    }
-    /*
     switch(nready=poll(targets,2,100)){
     case	-1:
       if(errno!=EINTR){
@@ -252,10 +403,9 @@ int Bridge()
 	    perror("read");
 	  }
 	  else{
-	    //if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
-	    if(AnalyzePacket(i,buf,size)!=-1){
+	    if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
 	      if((size=write(Device[(!i)].soc,buf,size))<=0){
-		perror("write");
+		//perror("write");
 	      }
 	    }
 	  }
@@ -263,7 +413,6 @@ int Bridge()
       }
       break;
     }
-    */
   }
   return(0);
 }
@@ -319,13 +468,13 @@ void getIfIp (const char *device, char *ipAddr)
 }
 
 void *thread1 (void *args) {
-  printf("Create Threat1\n");
+  printf("Create Thread1\n");
   Bridge();
   return NULL;
 }
 
 void *thread2 (void *args) {
-  printf("Create Threat2\n");
+  printf("Create Thread2\n");
   sendMyProtocol(0);
   return NULL;
 }
@@ -360,21 +509,25 @@ int main(int argc,char *argv[],char *envp[])
 {
   pthread_t th1, th2;
 
+  // Initialize Physical Interface IP Address
+  if(changeIpAddr(NameDev2, inet_addr(dev2IpAddr))==0){
+    printf("Change IP Address\n%s IP: %s\n", NameDev2, dev2IpAddr);
+  }
+
   //getArpCache();
 
   // Get Interface Infomation
   getIfMac(NameDev1, dev1MacAddr);
   getIfIp(NameDev1, dev1IpAddr);
   getIfMac(NameDev2, dev2MacAddr);
-  getIfIp(NameDev2, dev2IpAddr);
-  
-  // Init Soc
+  //getIfIp(NameDev2, dev2IpAddr);
+
+  // Init Socket
   if((Device[0].soc=InitRawSocket(NameDev1,1,0))==-1){
     DebugPrintf("InitRawSocket:error:%s\n",NameDev1);
     return(-1);
   }
   DebugPrintf("%s OK\n",NameDev1);
-
   if((Device[1].soc=InitRawSocket(NameDev2,1,0))==-1){
     DebugPrintf("InitRawSocket:error:%s\n",NameDev2);
     return(-1);
@@ -406,6 +559,6 @@ int main(int argc,char *argv[],char *envp[])
 
   close(Device[0].soc);
   close(Device[1].soc);
-
+  
   return(0);
 }
