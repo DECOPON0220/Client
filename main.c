@@ -30,7 +30,6 @@ const char *NameDev1="wlan1";
 const char *NameDev2="eth0";
 
 // ARP CACHE
-/*
 #define xstr(s) str(s)
 #define str(s) #s
 #define ARP_CACHE       "/proc/net/arp"
@@ -39,7 +38,6 @@ const char *NameDev2="eth0";
 #define ARP_LINE_FORMAT "%" xstr(ARP_STRING_LEN) "s %*s %*s " \
                         "%" xstr(ARP_STRING_LEN) "s %*s " \
                         "%" xstr(ARP_STRING_LEN) "s"
-*/
 
 
 
@@ -53,8 +51,8 @@ int EndFlag=0;
 int StatusFlag=1;
 int ClientMacFlag=0;
 
-char hostMacAddr[SIZE_MAC];
-char hostIpAddr[SIZE_IP];
+char apMacAddr[SIZE_MAC];
+char apIpAddr[SIZE_IP];
 char cliMacAddr[SIZE_MAC];
 char *cliIpAddr="192.168.100.11";
 char dev1MacAddr[SIZE_MAC];
@@ -134,7 +132,7 @@ int sendMyProtocol(int deviceNo)
     } else if(StatusFlag==2){
       printf("Send Approval Pakcet\n");
       
-      create_myprotocol(Device[deviceNo].soc, dev1MacAddr, hostMacAddr, dev1IpAddr, hostIpAddr, APPROVAL);
+      create_myprotocol(Device[deviceNo].soc, dev1MacAddr, apMacAddr, dev1IpAddr, apIpAddr, APPROVAL);
       StatusFlag=3;
     }
   }
@@ -208,7 +206,7 @@ int AnalyzePacket(int deviceNo,u_char *data,int size)
     
     my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
     my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
-    memcpy(hostMacAddr, sMACaddr, sizeof(sMACaddr));
+    memcpy(apMacAddr, sMACaddr, sizeof(sMACaddr));
 
     if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0 &&
        ntohs(eh->ether_type)==OFFER){
@@ -221,7 +219,7 @@ int AnalyzePacket(int deviceNo,u_char *data,int size)
 
       if(ntohs(myproto->type)==OFFER){
         memcpy(dev1IpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
-	memcpy(hostIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	memcpy(apIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
 	
 	if(changeIpAddr(NameDev1, myproto->ip_dst)==0){
 	  StatusFlag=2;
@@ -285,7 +283,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
       }
       
       // Rewrite IP Address
-      if(iphdr->saddr==inet_addr(hostIpAddr)){
+      if(iphdr->saddr==inet_addr(apIpAddr)){
 	iphdr->saddr=inet_addr(dev2IpAddr);
       }
       if(iphdr->daddr==inet_addr(dev1IpAddr)){
@@ -320,7 +318,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
     // Rewrite MAC Address
     my_ether_aton_r(dev1MacAddr, eh->ether_shost);
     if(strncmp(dMACaddr, dev2MacAddr, SIZE_MAC)==0){
-      my_ether_aton_r(hostMacAddr,eh->ether_dhost);
+      my_ether_aton_r(apMacAddr,eh->ether_dhost);
     }
 
     // Case: IP
@@ -346,7 +344,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
 	iphdr->saddr=inet_addr(dev1IpAddr);
       }
       if(iphdr->daddr==inet_addr(dev2IpAddr)){
-	iphdr->daddr=inet_addr(hostIpAddr);
+	iphdr->daddr=inet_addr(apIpAddr);
       }
        
       iphdr->check=0;
@@ -479,8 +477,7 @@ void *thread2 (void *args) {
   return NULL;
 }
 
-/*
-int getArpCache ()
+int getArpCache()
 {
   FILE *arpCache = fopen(ARP_CACHE, "r");
   if(!arpCache){
@@ -503,10 +500,10 @@ int getArpCache ()
   fclose(arpCache);
   return(0);
 }
-*/
 
 int main(int argc,char *argv[],char *envp[])
 {
+  getArpCache();
   pthread_t th1, th2;
 
   // Initialize Physical Interface IP Address
