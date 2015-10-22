@@ -10,6 +10,7 @@
 #include	<netinet/if_ether.h>
 #include	"netutil.h"
 
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
@@ -18,6 +19,7 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
+//#include <linux/wireless.h>
 #include "myprotocol.h"
 #include "checksum.h"
 
@@ -27,7 +29,9 @@
 
 // DEVICE NAME
 const char *NameDev1="wlan1";
-const char *NameDev2="eth0";
+const char *NameDev2="wlan2";
+const char *NameDev3="eth0";
+//const char *NameDev3="wlan2";
 
 // ARP CACHE
 #define xstr(s) str(s)
@@ -41,10 +45,16 @@ const char *NameDev2="eth0";
 
 
 
-typedef struct	{
+typedef struct {
   int	soc;
 }DEVICE;
-DEVICE	Device[2];
+DEVICE	Device[3];
+
+typedef struct {
+  char MacAddr[18];
+  int Qual;
+  char ESSID[64];
+}INFOAP;
 
 int DebugOut=0;
 int EndFlag=0;
@@ -57,8 +67,10 @@ char cliMacAddr[SIZE_MAC];
 char *cliIpAddr="192.168.100.11";
 char dev1MacAddr[SIZE_MAC];
 char dev2MacAddr[SIZE_MAC];
+char dev3MacAddr[SIZE_MAC];
 char dev1IpAddr[SIZE_IP];
-char *dev2IpAddr="192.168.100.1";
+char dev2IpAddr[SIZE_IP];
+char *dev3IpAddr="192.168.100.1";
 
 int DebugPrintf(char *fmt,...)
 {
@@ -259,7 +271,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
   
   // wirelessNIC -> physicalNIC
   if(deviceNo==0){
-    my_ether_aton_r(dev2MacAddr, eh->ether_shost);
+    my_ether_aton_r(dev3MacAddr, eh->ether_shost);
     if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0){
       my_ether_aton_r(cliMacAddr, eh->ether_dhost);
     }
@@ -284,7 +296,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
       
       // Rewrite IP Address
       if(iphdr->saddr==inet_addr(apIpAddr)){
-	iphdr->saddr=inet_addr(dev2IpAddr);
+	iphdr->saddr=inet_addr(dev3IpAddr);
       }
       if(iphdr->daddr==inet_addr(dev1IpAddr)){
 	iphdr->daddr=inet_addr(cliIpAddr);
@@ -317,7 +329,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
   } else if(deviceNo==1){
     // Rewrite MAC Address
     my_ether_aton_r(dev1MacAddr, eh->ether_shost);
-    if(strncmp(dMACaddr, dev2MacAddr, SIZE_MAC)==0){
+    if(strncmp(dMACaddr, dev3MacAddr, SIZE_MAC)==0){
       my_ether_aton_r(apMacAddr,eh->ether_dhost);
     }
 
@@ -343,7 +355,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
       if(iphdr->saddr==inet_addr(cliIpAddr)){
 	iphdr->saddr=inet_addr(dev1IpAddr);
       }
-      if(iphdr->daddr==inet_addr(dev2IpAddr)){
+      if(iphdr->daddr==inet_addr(dev3IpAddr)){
 	iphdr->daddr=inet_addr(apIpAddr);
       }
        
@@ -376,7 +388,7 @@ int RewritePacket (int deviceNo, u_char *data, int size)
 
 int Bridge()
 {
-  struct pollfd targets[2];
+  struct pollfd targets[3];
   int nready,i,size;
   u_char buf[2048];
 
@@ -384,9 +396,11 @@ int Bridge()
   targets[0].events=POLLIN|POLLERR;
   targets[1].fd=Device[1].soc;
   targets[1].events=POLLIN|POLLERR;
+  targets[1].fd=Device[2].soc;
+  targets[1].events=POLLIN|POLLERR;
 
   while(EndFlag==0){
-    switch(nready=poll(targets,2,100)){
+    switch(nready=poll(targets,3,100)){
     case	-1:
       if(errno!=EINTR){
 	perror("poll");
@@ -395,6 +409,7 @@ int Bridge()
     case	0:
       break;
     default:
+      /*
       for(i=0;i<2;i++){
 	if(targets[i].revents&(POLLIN|POLLERR)){
 	  if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
@@ -409,9 +424,161 @@ int Bridge()
 	  }
 	}
       }
-      break;
+      */
+      
+      for(i=0;i<3;i=i+2){
+	if(targets[i].revents&(POLLIN|POLLERR)){
+	  if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
+	    perror("read");
+	  }
+	  else{
+	    if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
+	      if(i==0){
+		if((size=write(Device[2].soc,buf,size))<=0){
+		  //perror("write");
+		}
+	      }else if(i==2){
+		if((size=write(Device[0].soc,buf,size))<=0){
+		  //perror("write");
+		}
+	      }
+	    }
+	  }
+	}
+      }
+      break; 
     }
   }
+  return(0);
+}
+
+int getNumAP(const char* file){
+  FILE *fp;
+  char buf[256];
+  int numLine = 0;    // Line number of 'ap.dat'
+  int numAP;
+
+  // Get the lines of 'ap.dat'
+  if ((fp=fopen(file, "r")) == NULL){
+    perror("FILE Open error");
+  }
+  while (fgets(buf, sizeof(buf), fp) != NULL) {
+    numLine++;
+  }
+  
+  numAP = ((numLine - 1) / 3);
+  
+  return numAP;
+}
+
+INFOAP *getAPInfo(const char* file, int numAP, INFOAP *tmpAP){
+  FILE *fp;
+  char buf[256];
+  const char *Addr = "          Cell";
+  const char *Qual = "                    Quality";
+  const char *Ssid = "                    ESSID";
+  int cmpAddr = 13;    // For comparison
+  int cmpQual = 26;
+  int cmpSsid = 24;
+  int plAddr, plQual, plSsid;
+  int calcAP, tmpNum;
+
+  // Get the information of AP
+  fp=fopen(file, "r");
+  calcAP = 0;
+  while (fgets(buf, sizeof(buf), fp) != NULL && calcAP < numAP) {
+    tmpNum = 0;
+    // Get Address 
+    if (strncmp(buf, Addr, cmpAddr) == 0) {
+      plAddr = 29;
+      while (buf[plAddr] != '\n') {
+	tmpAP[calcAP].MacAddr[tmpNum] = buf[plAddr];
+	tmpNum++;
+	plAddr++;
+      }
+      tmpAP[calcAP].MacAddr[tmpNum] = '\0';    // final char
+    }
+    // Get Quality -28
+    if (strncmp(buf, Qual, cmpQual) == 0) {
+      char tmpChar[2];
+      plQual = 28;
+      while (buf[plQual] != '/') {
+	tmpChar[tmpNum] = buf[plQual];
+	tmpNum++;
+	plQual++;
+      }
+      tmpAP[calcAP].Qual = atoi(tmpChar);
+    }
+    // Get Quality - 27
+    if (strncmp(buf, Ssid, cmpSsid) == 0) {
+      plSsid = 27;
+      while (buf[plSsid] != '\"') {
+	tmpAP[calcAP].ESSID[tmpNum] = buf[plSsid];
+	tmpNum++;
+	plSsid++;
+      }
+      tmpAP[calcAP].ESSID[tmpNum] = '\0';    // final char
+
+      calcAP++;
+    }
+  }
+
+  fclose(fp);
+  return tmpAP;
+}
+
+int scanAp()
+{
+  FILE *result, *fp;
+  char *filename = "ap.dat";
+  const char *cmdline = "iwlist wlan2 scan | egrep 'Cell |ESSID|Quality'";
+  INFOAP *infoAp;    // For storing AP info
+  int numAP;
+
+  while(EndFlag==0){
+    if ((result=popen(cmdline, "r")) == NULL){
+      perror ("Command error");
+    }
+
+    char buf[256];
+
+    // Overwride AP data in 'ap.dat'
+    //printf("Start '%s' update.\n", filename);
+    if ((fp=fopen(filename, "w")) == NULL){
+      perror ("File Open error");
+    }
+    while(!feof(result)){
+      fgets(buf, sizeof(buf), result);
+      fputs(buf, fp);
+    }
+    //printf("Finish '%s' update.\n", filename);
+
+    fclose(fp);
+    (void) pclose(result);
+    
+    // Get the information of AP
+    numAP = getNumAP(filename);
+    INFOAP tmpInfoAP[numAP];
+    infoAp = getAPInfo(filename, numAP, tmpInfoAP);
+
+    // Debug
+    int i = 0;
+    while (i < getNumAP(filename)) {
+      printf("%02d -  ESSID  : %s\n", i + 1, infoAp[i].ESSID);
+      printf("     Address : %s\n", infoAp[i].MacAddr);
+      printf("     Quality : %d\n", infoAp[i].Qual);
+      i++;
+    }
+    //
+    //CurrentAP[0] = maxQualityAP(infoAP, numAP);
+    // Debug
+    //printf("Current AP -  ESSID  : %s\n", CurrentAP[0].ESSID);
+    //printf("             Address : %s\n", CurrentAP[0].Address);
+    //printf("             Quality : %d\n", CurrentAP[0].Quality);
+
+    sleep(5);
+  }
+
   return(0);
 }
 
@@ -465,15 +632,24 @@ void getIfIp (const char *device, char *ipAddr)
   memcpy(ipAddr, inet_ntoa(((struct sockaddr_in *)&ifreq.ifr_addr)->sin_addr), SIZE_IP);
 }
 
-void *thread1 (void *args) {
+void *thread1(void *args)
+{
   printf("Create Thread1\n");
   Bridge();
   return NULL;
 }
 
-void *thread2 (void *args) {
+void *thread2(void *args)
+{
   printf("Create Thread2\n");
   sendMyProtocol(0);
+  return NULL;
+}
+
+void *thread3(void *args)
+{
+  printf("Create Thread3\n");
+  scanAp();
   return NULL;
 }
 
@@ -504,20 +680,20 @@ int getArpCache()
 int main(int argc,char *argv[],char *envp[])
 {
   getArpCache();
-  pthread_t th1, th2;
+  pthread_t th1, th2, th3;
 
   // Initialize Physical Interface IP Address
-  if(changeIpAddr(NameDev2, inet_addr(dev2IpAddr))==0){
-    printf("Change IP Address\n%s IP: %s\n", NameDev2, dev2IpAddr);
+  if(changeIpAddr(NameDev3, inet_addr(dev3IpAddr))==0){
+    printf("Change IP Address\n%s IP: %s\n", NameDev3, dev3IpAddr);
   }
-
-  //getArpCache();
 
   // Get Interface Infomation
   getIfMac(NameDev1, dev1MacAddr);
   getIfIp(NameDev1, dev1IpAddr);
-  getIfMac(NameDev2, dev2MacAddr);
+  //getIfMac(NameDev2, dev2MacAddr);
   //getIfIp(NameDev2, dev2IpAddr);
+  getIfMac(NameDev3, dev3MacAddr);
+  //getIfIp(NameDev3, dev3IpAddr);
 
   // Init Socket
   if((Device[0].soc=InitRawSocket(NameDev1,1,0))==-1){
@@ -530,6 +706,11 @@ int main(int argc,char *argv[],char *envp[])
     return(-1);
   }
   DebugPrintf("%s OK\n",NameDev2);
+  if((Device[2].soc=InitRawSocket(NameDev3,1,0))==-1){
+    DebugPrintf("InitRawSocket:error:%s\n",NameDev3);
+    return(-1);
+  }
+  DebugPrintf("%s OK\n",NameDev3);
 
   DisableIpForward();
 
@@ -549,6 +730,9 @@ int main(int argc,char *argv[],char *envp[])
   if ((status = pthread_create(&th2, NULL, thread2, NULL)) != 0) {
     printf("pthread_create%s\n", strerror(status));
   }
+  if ((status = pthread_create(&th3, NULL, thread3, NULL)) != 0) {
+    printf("pthread_create%s\n", strerror(status));
+  }
   DebugPrintf("bridge end\n");
 
   pthread_join(th1, NULL);
@@ -556,6 +740,7 @@ int main(int argc,char *argv[],char *envp[])
 
   close(Device[0].soc);
   close(Device[1].soc);
+  close(Device[2].soc);
   
   return(0);
 }
