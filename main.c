@@ -33,6 +33,9 @@ const char *NameDev2="wlan2";
 const char *NameDev3="eth0";
 //const char *NameDev3="wlan2";
 
+const char *apEssId="test_ap";
+const char *filename="myap.dat";
+
 // ARP CACHE
 #define xstr(s) str(s)
 #define str(s) #s
@@ -56,10 +59,15 @@ typedef struct {
   char ESSID[64];
 }INFOAP;
 
+INFOAP mainAP;
+INFOAP subAP;
+
 int DebugOut=0;
 int EndFlag=0;
 int StatusFlag=1;
 int ClientMacFlag=0;
+int ScanFlag=0;
+int MainDev=0;
 
 char apMacAddr[SIZE_MAC];
 char apIpAddr[SIZE_IP];
@@ -71,6 +79,11 @@ char dev3MacAddr[SIZE_MAC];
 char dev1IpAddr[SIZE_IP];
 char dev2IpAddr[SIZE_IP];
 char *dev3IpAddr="192.168.100.1";
+
+
+
+INFOAP *getMyApInfo(const char* file, int numAP, INFOAP *tmpAP);
+int getNumMyAP(const char* file);
 
 int DebugPrintf(char *fmt,...)
 {
@@ -129,26 +142,64 @@ void create_myprotocol (int soc, char *smac, char *dmac, char *sip, char *dip, u
   }
 }
 
-int sendMyProtocol(int deviceNo)
+int getMaxIndex(INFOAP *myap, int numMyAp)
 {
-  while(EndFlag==0){
-    if(StatusFlag==1){
-      printf("Send Discover Packet\n");
-      
-      char *dmac = "ff:ff:ff:ff:ff:ff";
-      char *sip = "00H.00H.00H.00H";
-      char *dip = "FF.FF.FF.FF";
-      create_myprotocol(Device[deviceNo].soc, dev1MacAddr, dmac, sip, dip, DISCOVER);
-      
-      usleep(10000 * 100);
-    } else if(StatusFlag==2){
-      printf("Send Approval Pakcet\n");
-      
-      create_myprotocol(Device[deviceNo].soc, dev1MacAddr, apMacAddr, dev1IpAddr, apIpAddr, APPROVAL);
-      StatusFlag=3;
+  int i;
+  int maxIndex;
+  int maxQual;
+
+  maxQual=myap[0].Qual;
+  
+  if(numMyAp>1){
+    for(i=1;i<numMyAp;i++){
+      if(maxQual>myap[i].Qual){
+	maxQual=myap[i].Qual;
+	maxIndex=i;
+      }
     }
   }
+
+  return(maxIndex);
+}
+
+int sendMyProtocol(int deviceNo)
+{
+  int numMyAp;
+  int maxIndex;
+
+  numMyAp=getNumMyAP(filename);
+  INFOAP InfoMyAp[numMyAp];
+  
+  if(numMyAp==0){
+    return(0);
+  }
+
+  getMyApInfo(filename, numMyAp, InfoMyAp);
+  //printf("infoMyAp[0].MacAddr: %s\n", InfoMyAp[0].MacAddr);
+  //printf("infoMyAp[1].MacAddr: %s\n", InfoMyAp[1].MacAddr);
+  //printf("infoMyAp[0].Qual: %d\n", InfoMyAp[0].Qual);
+  //printf("infoMyAp[1].Qual: %d\n", InfoMyAp[1].Qual);
+  
+  maxIndex=getMaxIndex(InfoMyAp, numMyAp);
+  //printf("maxIndex: %d\n", maxIndex);
+
+  if(StatusFlag==1){
+    printf("Send Discover Packet\n");
     
+    //char *dmac = "ff:ff:ff:ff:ff:ff";
+    char *sip = "00H.00H.00H.00H";
+    char *dip = "FF.FF.FF.FF";
+    create_myprotocol(Device[deviceNo].soc, dev1MacAddr, InfoMyAp[maxIndex].MacAddr, sip, dip, DISCOVER);
+
+    usleep(10000 * 100);
+  } else if(StatusFlag==2){
+    printf("Send Approval Pakcet\n");
+    
+    create_myprotocol(Device[deviceNo].soc, dev1MacAddr, InfoMyAp[1].MacAddr, dev1IpAddr, apIpAddr, APPROVAL);
+
+    StatusFlag=3;
+  }
+
   return(0);
 }
 
@@ -400,53 +451,38 @@ int Bridge()
   targets[1].events=POLLIN|POLLERR;
 
   while(EndFlag==0){
-    switch(nready=poll(targets,3,100)){
-    case	-1:
-      if(errno!=EINTR){
-	perror("poll");
-      }
-      break;
-    case	0:
-      break;
-    default:
-      /*
-      for(i=0;i<2;i++){
-	if(targets[i].revents&(POLLIN|POLLERR)){
-	  if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
-	    perror("read");
-	  }
-	  else{
-	    if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
-	      if((size=write(Device[(!i)].soc,buf,size))<=0){
-		//perror("write");
-	      }
-	    }
-	  }
+    if(ScanFlag!=0){
+      switch(nready=poll(targets,3,100)){
+      case	-1:
+	if(errno!=EINTR){
+	  perror("poll");
 	}
-      }
-      */
-      
-      for(i=0;i<3;i=i+2){
-	if(targets[i].revents&(POLLIN|POLLERR)){
-	  if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
-	    perror("read");
-	  }
-	  else{
-	    if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
-	      if(i==0){
-		if((size=write(Device[2].soc,buf,size))<=0){
-		  //perror("write");
-		}
-	      }else if(i==2){
-		if((size=write(Device[0].soc,buf,size))<=0){
-		  //perror("write");
+	break;
+      case	0:
+	break;
+      default:
+	for(i=0;i<3;i=i+2){
+	  if(targets[i].revents&(POLLIN|POLLERR)){
+	    if((size=read(Device[i].soc,buf,sizeof(buf)))<=0){
+	      perror("read");
+	    }
+	    else{
+	      if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
+		if(i==0){
+		  if((size=write(Device[2].soc,buf,size))<=0){
+		    //perror("write");
+		  }
+		}else if(i==2){
+		  if((size=write(Device[0].soc,buf,size))<=0){
+		    //perror("write");
+		  }
 		}
 	      }
 	    }
 	  }
 	}
+	break; 
       }
-      break; 
     }
   }
   return(0);
@@ -468,6 +504,25 @@ int getNumAP(const char* file){
   
   numAP = ((numLine - 1) / 3);
   
+  return numAP;
+}
+
+int getNumMyAP(const char* file){
+  FILE *fp;
+  char buf[256];
+  int numLine = 0;    // Line number of 'ap.dat'
+  int numAP;
+
+  // Get the lines of 'ap.dat'
+  if ((fp=fopen(file, "r")) == NULL){
+    perror("FILE Open error");
+  }
+  while (fgets(buf, sizeof(buf), fp) != NULL) {
+    numLine++;
+  }
+  
+  numAP = numLine / 2;
+
   return numAP;
 }
 
@@ -498,14 +553,19 @@ INFOAP *getAPInfo(const char* file, int numAP, INFOAP *tmpAP){
       }
       tmpAP[calcAP].MacAddr[tmpNum] = '\0';    // final char
     }
-    // Get Quality -28
+    // Get Quality - 49
     if (strncmp(buf, Qual, cmpQual) == 0) {
       char tmpChar[2];
-      plQual = 28;
-      while (buf[plQual] != '/') {
+      plQual = 49;
+
+      tmpChar[tmpNum] = buf[plQual];
+      tmpNum++;
+      plQual++;
+
+      if(buf[plQual]==' '){
+	tmpChar[tmpNum] = '\0';
+      }else{
 	tmpChar[tmpNum] = buf[plQual];
-	tmpNum++;
-	plQual++;
       }
       tmpAP[calcAP].Qual = atoi(tmpChar);
     }
@@ -527,15 +587,73 @@ INFOAP *getAPInfo(const char* file, int numAP, INFOAP *tmpAP){
   return tmpAP;
 }
 
+INFOAP *getMyApInfo(const char* file, int numAP, INFOAP *tmpAP)
+{
+  FILE *fp;
+  char buf[256];
+  const char *Addr = "Address : ";
+  const char *Qual = "Quality : ";
+  int cmpAddr = 10;    // For comparison
+  int cmpQual = 10;
+  int plAddr, plQual;
+  int calcAP, tmpNum;
+  
+  // Get the information of AP
+  fp=fopen(file, "r");
+  calcAP = 0;
+  while (fgets(buf, sizeof(buf), fp) != NULL && calcAP < numAP) {
+    tmpNum = 0;
+    // Get Address 10
+    if (strncmp(buf, Addr, cmpAddr) == 0) {
+      plAddr = 10;
+      while (buf[plAddr] != '\n') {
+	tmpAP[calcAP].MacAddr[tmpNum] = buf[plAddr];
+	tmpNum++;
+	plAddr++;
+      }
+      tmpAP[calcAP].MacAddr[tmpNum] = '\0';    // final char
+    }
+    // Get Quality - 10
+    if (strncmp(buf, Qual, cmpQual) == 0) {
+      char tmpChar[2];
+      plQual = 10;
+
+      tmpChar[tmpNum] = buf[plQual];
+      tmpNum++;
+      plQual++;
+      
+      if(buf[plQual]==' '){
+	tmpChar[tmpNum] = '\0';
+      }else{
+	tmpChar[tmpNum] = buf[plQual];
+      }
+      tmpAP[calcAP].Qual = atoi(tmpChar);
+
+      calcAP++;
+    }
+  }
+
+  fclose(fp);
+  return tmpAP;
+}
+
 int scanAp()
 {
   FILE *result, *fp;
-  char *filename = "ap.dat";
-  const char *cmdline = "iwlist wlan2 scan | egrep 'Cell |ESSID|Quality'";
+  const char *tmpfile = "tmp.dat";
+  const char *tmpcmd = "iwlist %s scan | egrep 'Cell |ESSID|Quality'";
+  char cmdline[64];
+
   INFOAP *infoAp;    // For storing AP info
   int numAP;
 
   while(EndFlag==0){
+    if(MainDev==0){
+      sprintf(cmdline, tmpcmd, NameDev2);
+    }else if(MainDev==1){
+      sprintf(cmdline, tmpcmd, NameDev1);
+    }
+
     if ((result=popen(cmdline, "r")) == NULL){
       perror ("Command error");
     }
@@ -544,7 +662,7 @@ int scanAp()
 
     // Overwride AP data in 'ap.dat'
     //printf("Start '%s' update.\n", filename);
-    if ((fp=fopen(filename, "w")) == NULL){
+    if ((fp=fopen(tmpfile, "w")) == NULL){
       perror ("File Open error");
     }
     while(!feof(result)){
@@ -552,29 +670,35 @@ int scanAp()
       fputs(buf, fp);
     }
     //printf("Finish '%s' update.\n", filename);
-
     fclose(fp);
     (void) pclose(result);
     
     // Get the information of AP
-    numAP = getNumAP(filename);
+    numAP = getNumAP(tmpfile);
     INFOAP tmpInfoAP[numAP];
-    infoAp = getAPInfo(filename, numAP, tmpInfoAP);
+    infoAp = getAPInfo(tmpfile, numAP, tmpInfoAP);
 
-    // Debug
-    int i = 0;
-    while (i < getNumAP(filename)) {
-      printf("%02d -  ESSID  : %s\n", i + 1, infoAp[i].ESSID);
-      printf("     Address : %s\n", infoAp[i].MacAddr);
-      printf("     Quality : %d\n", infoAp[i].Qual);
-      i++;
+    // Write My Access Point
+    // Reset
+    if ((fp=fopen(filename, "w")) == NULL){
+      perror ("File Open error");
     }
-    //
-    //CurrentAP[0] = maxQualityAP(infoAP, numAP);
-    // Debug
-    //printf("Current AP -  ESSID  : %s\n", CurrentAP[0].ESSID);
-    //printf("             Address : %s\n", CurrentAP[0].Address);
-    //printf("             Quality : %d\n", CurrentAP[0].Quality);
+    fclose(fp);
+    if ((fp=fopen(filename, "a")) == NULL){
+      perror ("File Open error");
+    }
+    int i;
+    for(i=0;i<numAP;i++){
+      if(strcmp(infoAp[i].ESSID, apEssId)==0){
+	fprintf(fp, "Address : %s\n", infoAp[i].MacAddr);
+	fprintf(fp, "Quality : %d\n", infoAp[i].Qual);
+      }
+    }
+    fclose(fp);
+ 
+    if(ScanFlag==0){
+      ScanFlag=1;
+    }
 
     sleep(5);
   }
@@ -642,7 +766,11 @@ void *thread1(void *args)
 void *thread2(void *args)
 {
   printf("Create Thread2\n");
-  sendMyProtocol(0);
+  while(EndFlag==0){
+    if(ScanFlag!=0){
+      sendMyProtocol(MainDev);
+    }
+  }
   return NULL;
 }
 
@@ -690,8 +818,8 @@ int main(int argc,char *argv[],char *envp[])
   // Get Interface Infomation
   getIfMac(NameDev1, dev1MacAddr);
   getIfIp(NameDev1, dev1IpAddr);
-  //getIfMac(NameDev2, dev2MacAddr);
-  //getIfIp(NameDev2, dev2IpAddr);
+  getIfMac(NameDev2, dev2MacAddr);
+  getIfIp(NameDev2, dev2IpAddr);
   getIfMac(NameDev3, dev3MacAddr);
   //getIfIp(NameDev3, dev3IpAddr);
 
