@@ -19,45 +19,26 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
-//#include <linux/wireless.h>
+#include "mydef.h"
+#include "mystruct.h"
 #include "myprotocol.h"
 #include "checksum.h"
+#include "ifutil.h"
+//#include "rewrite.h"
 
-#define MAXSIZE 8192
-#define SIZE_MAC 18
-#define SIZE_IP 15
+
 
 // DEVICE NAME
+char *testmac="ff:ff:ff:ff:ff:ff";
+
 const char *NameDev1="wlan1";
 const char *NameDev2="wlan2";
 const char *NameDev3="eth0";
-//const char *NameDev3="wlan2";
 
 const char *apEssId="test_ap";
 const char *filename="myap.dat";
 
-// ARP CACHE
-#define xstr(s) str(s)
-#define str(s) #s
-#define ARP_CACHE       "/proc/net/arp"
-#define ARP_STRING_LEN  1023
-#define ARP_BUFFER_LEN  (ARP_STRING_LEN + 1)
-#define ARP_LINE_FORMAT "%" xstr(ARP_STRING_LEN) "s %*s %*s " \
-                        "%" xstr(ARP_STRING_LEN) "s %*s " \
-                        "%" xstr(ARP_STRING_LEN) "s"
 
-
-
-typedef struct {
-  int	soc;
-}DEVICE;
-DEVICE	Device[3];
-
-typedef struct {
-  char MacAddr[18];
-  int Qual;
-  char ESSID[64];
-}INFOAP;
 
 INFOAP mainAP;
 INFOAP subAP;
@@ -105,41 +86,6 @@ int DebugPerror(char *msg)
   }
 
   return(0);
-}
-
-void make_ethernet(struct ether_header *eth, unsigned char *ether_dhost,
-		unsigned char *ether_shost, u_int16_t ether_type) {
-	memcpy(eth->ether_dhost, ether_dhost, 6);
-	memcpy(eth->ether_shost, ether_shost, 6);
-	eth->ether_type = htons(ether_type);
-}
-
-void make_mydhcp(struct myprotocol *myproto, char *sip, char *dip, u_short type) {
-  myproto->ip_src = inet_addr(sip);
-  myproto->ip_dst = inet_addr(dip);
-  myproto->type = htons(type);
-}
-
-
-void create_myprotocol (int soc, char *smac, char *dmac, char *sip, char *dip, u_short type) {
-  char *sp;
-  char send_buff[MAXSIZE];
-  u_char smac_addr[6];
-  u_char dmac_addr[6];
-
-  sp = send_buff + sizeof(struct ether_header);
-
-  my_ether_aton_r(smac, smac_addr);
-  my_ether_aton_r(dmac, dmac_addr);
-  
-  make_mydhcp((struct myprotocol *) sp, sip, dip, type);
-  make_ethernet((struct ether_header *) send_buff, dmac_addr, smac_addr, type);
-
-  int len;
-  len = sizeof(struct ether_header) + sizeof(struct myprotocol);
-  if (write(soc, send_buff, len) < 0) {
-    perror("write");
-  }
 }
 
 int getMaxIndex(INFOAP *myap, int numMyAp)
@@ -190,6 +136,7 @@ int sendMyProtocol(int deviceNo)
     char *sip = "00H.00H.00H.00H";
     char *dip = "FF.FF.FF.FF";
     create_myprotocol(Device[deviceNo].soc, dev1MacAddr, InfoMyAp[maxIndex].MacAddr, sip, dip, DISCOVER);
+    //create_myprotocol(Device[deviceNo].soc, dev1MacAddr, dmac, sip, dip, DISCOVER);
 
     usleep(10000 * 100);
   } else if(StatusFlag==2){
@@ -203,27 +150,12 @@ int sendMyProtocol(int deviceNo)
   return(0);
 }
 
-int changeIpAddr(const char *device, u_int32_t ip)
+/*
+int chkMyProtocol()
 {
-  int fd;
-  struct ifreq ifr;
-  struct sockaddr_in *s_in;
-
-  fd=socket(AF_INET, SOCK_DGRAM, 0);
-
-  s_in = (struct sockaddr_in *)&ifr.ifr_addr;
-  s_in->sin_family = AF_INET;
-  s_in->sin_addr.s_addr = ip;
-
-  strncpy(ifr.ifr_name, device, IFNAMSIZ-1);
-
-  if (ioctl(fd, SIOCSIFADDR, &ifr) != 0) {
-    perror("ioctl");
-  }
-
-  close(fd);
-  return(0);
+  
 }
+*/
 
 int AnalyzePacket(int deviceNo,u_char *data,int size)
 {
@@ -273,18 +205,18 @@ int AnalyzePacket(int deviceNo,u_char *data,int size)
 
     if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0 &&
        ntohs(eh->ether_type)==OFFER){
-      struct myprotocol *myproto;
+      MYPROTO *myproto;
       
       printf("Recieve Offer Packet\n");
-      myproto=(struct myprotocol *) ptr;
-      ptr+=sizeof(struct myprotocol);
-      lest-=sizeof(struct myprotocol);
+      myproto=(MYPROTO *) ptr;
+      ptr+=sizeof(MYPROTO);
+      lest-=sizeof(MYPROTO);
 
       if(ntohs(myproto->type)==OFFER){
         memcpy(dev1IpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
 	memcpy(apIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
 	
-	if(changeIpAddr(NameDev1, myproto->ip_dst)==0){
+	if(chgIfIp(NameDev1, myproto->ip_dst)==0){
 	  StatusFlag=2;
 	  return(-1);
 	}
@@ -563,7 +495,7 @@ INFOAP *getAPInfo(const char* file, int numAP, INFOAP *tmpAP){
       plQual++;
 
       if(buf[plQual]==' '){
-	tmpChar[tmpNum] = '\0';
+        tmpChar[tmpNum] = '\0';
       }else{
 	tmpChar[tmpNum] = buf[plQual];
       }
@@ -725,37 +657,6 @@ void EndSignal(int sig)
   EndFlag=1;
 }
 
-void getIfInfo (const char *device, struct ifreq *ifreq, int flavor)
-{
-  int fd;
-
-  fd = socket(AF_INET, SOCK_DGRAM, 0);
-  memset(ifreq, '\0', sizeof(*ifreq));
-  strcpy(ifreq->ifr_name, device);
-  ioctl(fd, flavor, ifreq);
-  close(fd);
-}
-
-void getIfMac (const char *device, char *macAddr)
-{
-  struct ifreq ifreq;
-  u_char tmpAddr[6];
-
-  getIfInfo(device, &ifreq, SIOCGIFHWADDR);
-  
-  int i;
-  for(i=0;i<6;i++) tmpAddr[i]=(char)ifreq.ifr_hwaddr.sa_data[i];
-  my_ether_ntoa_r(tmpAddr, macAddr, SIZE_MAC);
-}
-
-void getIfIp (const char *device, char *ipAddr)
-{
-  struct ifreq ifreq;
-  
-  getIfInfo(device, &ifreq, SIOCGIFADDR);
-  memcpy(ipAddr, inet_ntoa(((struct sockaddr_in *)&ifreq.ifr_addr)->sin_addr), SIZE_IP);
-}
-
 void *thread1(void *args)
 {
   printf("Create Thread1\n");
@@ -781,28 +682,55 @@ void *thread3(void *args)
   return NULL;
 }
 
-int getArpCache()
-{
-  FILE *arpCache = fopen(ARP_CACHE, "r");
-  if(!arpCache){
-    perror("Arp Cache: Failed to open file \"" ARP_CACHE "\"");
-    return (0);
-  }
-  
-  // Ignore the first line, which contains the header
-  char header[ARP_BUFFER_LEN];
-  if(!fgets(header, sizeof(header), arpCache)){
-    return(0);
-  }
+typedef struct{
+  u_int8_t dst[6];
+  u_int8_t src[6];
+  u_short len;
+  u_char dsap[1];
+  u_char ssap[1];
+  u_char cf[1];
+  u_char xidfmt[1];
+  u_char llctype[1];
+}TestPacket;
 
-  char ipAddr[ARP_BUFFER_LEN], hwAddr[ARP_BUFFER_LEN], device[ARP_BUFFER_LEN];
-  int count = 0;
-  while(3 == fscanf(arpCache, ARP_LINE_FORMAT, ipAddr, hwAddr, device)){
-    printf("%03d: Mac Address of [%s] on [%s] is \"%s\"\n",
-	   ++count, ipAddr, device, hwAddr);
+void make_testpacket(TestPacket *test)
+{
+  //char *tmp="ff:ff:ff:ff:ff:ff";
+  u_char smac[6];
+  u_char dmac[6];
+  
+  my_ether_aton_r(dev1MacAddr, smac);
+  my_ether_aton_r(testmac, dmac);
+
+  memcpy(test->dst, dmac, 6);
+  memcpy(test->src, smac, 6);
+  test->len=htons(0x0006);
+  my_ether_aton_r("0x00", test->dsap);
+  my_ether_aton_r("0x01", test->ssap);
+  my_ether_aton_r("0xaf", test->cf);
+  my_ether_aton_r("0x81", test->xidfmt);
+  my_ether_aton_r("0x01", test->llctype);
+}
+
+void sendTestPacket()
+{
+  printf("Test Start\n");
+  
+  //char *dmac="ff:ff:ff:ff:ff:ff";
+  u_char   send_buff[MAXSIZE];
+  //u_char smac_addr[6];
+  //u_char dmac_addr[6];
+
+  //my_ether_aton_r(dev2MacAddr, smac_addr);
+  //my_ether_aton_r(dmac, dmac_addr);
+ 
+  make_testpacket((TestPacket *)send_buff);
+
+  int len;
+  len=sizeof(struct ether_header)+sizeof(MYPROTO);
+  if(write(Device[0].soc, send_buff, len) < 0){
+    perror("write");
   }
-  fclose(arpCache);
-  return(0);
 }
 
 int main(int argc,char *argv[],char *envp[])
@@ -811,7 +739,7 @@ int main(int argc,char *argv[],char *envp[])
   pthread_t th1, th2, th3;
 
   // Initialize Physical Interface IP Address
-  if(changeIpAddr(NameDev3, inet_addr(dev3IpAddr))==0){
+  if(chgIfIp(NameDev3, inet_addr(dev3IpAddr))==0){
     printf("Change IP Address\n%s IP: %s\n", NameDev3, dev3IpAddr);
   }
 
@@ -850,6 +778,11 @@ int main(int argc,char *argv[],char *envp[])
   signal(SIGTTIN,SIG_IGN);
   signal(SIGTTOU,SIG_IGN);
 
+  //-----
+  sendTestPacket();
+  return(0);
+  //-----
+  
   DebugPrintf("bridge start\n");
   int status;
   if ((status = pthread_create(&th1, NULL, thread1, NULL)) != 0) {

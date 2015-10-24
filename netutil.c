@@ -1,16 +1,18 @@
-#include	<stdio.h>
-#include	<string.h>
-#include	<unistd.h>
-#include	<sys/ioctl.h>
-#include	<arpa/inet.h>
-#include	<sys/socket.h>
-#include	<linux/if.h>
-#include	<net/ethernet.h>
-#include	<netpacket/packet.h>
-#include	<netinet/if_ether.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <linux/if.h>
+#include <net/ethernet.h>
+#include <netpacket/packet.h>
+#include <netinet/if_ether.h>
+#include "mydef.h"
 
 extern int	DebugPrintf(char *fmt,...);
 extern int	DebugPerror(char *msg);
+
 
 
 int InitRawSocket(const char *device,int promiscFlag,int ipOnly)
@@ -70,10 +72,10 @@ int InitRawSocket(const char *device,int promiscFlag,int ipOnly)
   return(soc);
 }
 
-u_char *my_ether_aton_r(char *hwaddr, u_char *buf)
+u_char *my_ether_aton_r(char *hwaddr,u_char *buf)
 {
-  sscanf(hwaddr, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-	 &buf[0], &buf[1], &buf[2], &buf[3], &buf[4], &buf[5]);
+  sscanf(hwaddr,"%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+	 &buf[0],&buf[1],&buf[2],&buf[3],&buf[4],&buf[5]);
 
   return(buf);
 }
@@ -86,9 +88,33 @@ char *my_ether_ntoa_r(u_char *hwaddr,char *buf,socklen_t size)
   return(buf);
 }
 
+int getArpCache()
+{
+  FILE *arpCache=fopen(ARP_CACHE,"r");
+  if(!arpCache){
+    perror("Arp Cache: Failed to open file \"" ARP_CACHE "\"");
+    return (0);
+  }
+  
+  // Ignore the first line, which contains the header
+  char header[ARP_BUFFER_LEN];
+  if(!fgets(header,sizeof(header),arpCache)){
+    return(0);
+  }
+
+  char ipAddr[ARP_BUFFER_LEN], hwAddr[ARP_BUFFER_LEN], device[ARP_BUFFER_LEN];
+  int count=0;
+  while(3==fscanf(arpCache,ARP_LINE_FORMAT,ipAddr,hwAddr,device)){
+    printf("%03d: Mac Address of [%s] on [%s] is \"%s\"\n",
+	   ++count,ipAddr,device,hwAddr);
+  }
+  fclose(arpCache);
+  return(0);
+}
+
 int PrintEtherHeader(struct ether_header *eh,FILE *fp)
 {
-  char	buf[80];
+  char buf[80];
 
   fprintf(fp,"ether_header----------------------------\n");
   fprintf(fp,"ether_dhost=%s\n",my_ether_ntoa_r(eh->ether_dhost,buf,sizeof(buf)));
