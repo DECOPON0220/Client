@@ -7,8 +7,12 @@
 #include "mydef.h"
 #include "mystruct.h"
 #include "netutil.h"
+#include "ifutil.h"
 
 
+// tmp
+extern const char *NameDev1;
+extern int StatusFlag;
 
 void make_ethernet(struct ether_header *eth,unsigned char *ether_dhost,
 		   unsigned char *ether_shost,u_int16_t ether_type)
@@ -38,11 +42,56 @@ void create_myprotocol(int soc,char *smac,char *dmac,char *sip,char *dip,u_short
   my_ether_aton_r(dmac, dmac_addr);
   
   make_mydhcp((MYPROTO *) sp, sip, dip, type);
-  make_ethernet((struct ether_header *) send_buff, dmac_addr, smac_addr, type);
+  make_ethernet((struct ether_header *) send_buff, dmac_addr, smac_addr, MYPROTOCOL);
 
   int len;
   len = sizeof(struct ether_header) + sizeof(MYPROTO);
   if (write(soc, send_buff, len) < 0) {
     perror("write");
   }
+}
+
+int chkMyProtocol(u_char *data, char *smac, char *dmac, char *sip, char *dip, u_short type, int size)
+{
+  u_char              *ptr;
+  int                 lest;
+  struct ether_header *eh;
+  
+  ptr=data;
+  lest=size;
+  
+  eh=(struct ether_header *)ptr;
+  ptr+=sizeof(struct ether_header);
+  lest-=sizeof(struct ether_header);
+
+  char sMACaddr[18];
+  char dMACaddr[18];
+  
+  my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
+  my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
+
+  // Check Ethernet header
+  if((strncmp(dMACaddr, dmac, SIZE_MAC)==0) &&
+     (ntohs(eh->ether_type)==MYPROTOCOL)){
+       MYPROTO *myproto;
+
+       myproto=(MYPROTO *) ptr;
+       ptr+=sizeof(MYPROTO);
+       lest-=sizeof(MYPROTO);
+       
+       // Check Myprotocol
+       if(ntohs(myproto->type)==type){
+	 printf("Recieve Offer Packet\n");
+	 memcpy(smac, sMACaddr, sizeof(sMACaddr));
+	 memcpy(sip, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
+	 memcpy(dip, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	 
+	 if(chgIfIp(NameDev1, myproto->ip_dst)==0){
+	   //StatusFlag=2;
+	   return(-1);
+	 }
+       }
+  }
+     
+  return(0);
 }

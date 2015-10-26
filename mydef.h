@@ -1,9 +1,20 @@
-#define MAXSIZE  8192
-#define SIZE_MAC 18
-#define SIZE_IP  15
-#define DISCOVER 0x1001
-#define OFFER    0x1002
-#define APPROVAL 0x1003
+#define MAXSIZE      8192
+#define SIZE_MAC     18
+#define SIZE_IP      15
+#define ITEM_AP      3
+#define ITEM_MYAP    2
+#define ON           1
+#define OFF          0
+#define DISCOVER     0x1001
+#define OFFER        0x1002
+#define APPROVAL     0x1003
+#define MYPROTOCOL   0x1010
+#define STA_DISCOVER 1
+#define STA_APPROVAL 2
+#define STA_WAIT     3
+#define WLAN1        0
+#define WLAN2        1
+#define ETH1         2
 
 // ARP CACHE
 #define xstr(s) str(s)
