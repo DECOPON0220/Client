@@ -7,11 +7,11 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
+#include <netinet/ip.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <pthread.h>
-#include <netinet/ip.h>
-//-----
+//----- RewritePacket()
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 //-----
@@ -34,7 +34,7 @@ const char *NameDev3="eth0";
 const char *apEssId="test_ap";
 const char *filename="myap.dat";
 
-int DebugOut=ON;
+int DebugOut=OFF;
 int EndFlag=OFF;
 int StatusFlag=STA_DISCOVER;
 int ClientMacFlag=OFF;
@@ -53,6 +53,8 @@ char dev1IpAddr[SIZE_IP];
 char dev2IpAddr[SIZE_IP];
 char *dev3IpAddr="192.168.100.1";
 
+DEVICE	Device[3];
+
 
 
 int AnalyzePacket(int deviceNo, u_char *data, int size)
@@ -70,9 +72,9 @@ int AnalyzePacket(int deviceNo, u_char *data, int size)
   eh=(struct ether_header *)ptr;
   ptr+=sizeof(struct ether_header);
   lest-=sizeof(struct ether_header);
-  //DebugPrintf("[%d]",deviceNo);
+  DebugPrintf("[%d]",deviceNo);
   if(DebugOut){
-    //PrintEtherHeader(eh,stderr);
+    PrintEtherHeader(eh,stderr);
   }
 
   // Get Client Mac Address
@@ -94,7 +96,7 @@ int AnalyzePacket(int deviceNo, u_char *data, int size)
   // Check My Protocol
   if(StatusFlag==STA_DISCOVER) {
     // Check Offer Packet
-    if(chkMyProtocol(data, apMacAddr, dev1MacAddr, dev1IpAddr, apIpAddr, OFFER, size)==-1){
+    if(chkMyProtocol(data, apMacAddr, dev1MacAddr, apIpAddr, dev1IpAddr, OFFER, size)==-1){
       StatusFlag=STA_APPROVAL;
       return(-1);
     }
@@ -431,7 +433,7 @@ int DisableIpForward()
 
 void EndSignal(int sig)
 {
-  EndFlag=1;
+  EndFlag=ON;
 }
 
 void *thread1(void *args)

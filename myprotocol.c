@@ -10,9 +10,12 @@
 #include "ifutil.h"
 
 
+
 // tmp
 extern const char *NameDev1;
 extern int StatusFlag;
+
+
 
 void make_ethernet(struct ether_header *eth,unsigned char *ether_dhost,
 		   unsigned char *ether_shost,u_int16_t ether_type)
@@ -83,8 +86,8 @@ int chkMyProtocol(u_char *data, char *smac, char *dmac, char *sip, char *dip, u_
        if(ntohs(myproto->type)==type){
 	 printf("Recieve Offer Packet\n");
 	 memcpy(smac, sMACaddr, sizeof(sMACaddr));
-	 memcpy(sip, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
-	 memcpy(dip, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	 memcpy(sip, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	 memcpy(dip, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
 	 
 	 if(chgIfIp(NameDev1, myproto->ip_dst)==0){
 	   //StatusFlag=2;

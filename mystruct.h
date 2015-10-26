@@ -1,7 +1,6 @@
 typedef struct {
   int	soc;
 }DEVICE;
-DEVICE	Device[3];
 
 typedef struct {
   char MacAddr[SIZE_MAC];
