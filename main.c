@@ -28,8 +28,8 @@
 
 
 // --- Global Variable ---
-const char *NameDev1="wlan1";
-const char *NameDev2="wlan2";
+const char *NameDev1="wlan0";
+const char *NameDev2="wlan1";
 const char *NameDev3="eth0";
 const char *apEssId="test_ap";
 const char *filename="myap.dat";
@@ -51,7 +51,7 @@ char dev2MacAddr[SIZE_MAC];
 char dev3MacAddr[SIZE_MAC];
 char dev1IpAddr[SIZE_IP];
 char dev2IpAddr[SIZE_IP];
-char *dev3IpAddr="192.168.100.1";
+char dev3IpAddr[SIZE_IP];
 
 DEVICE	Device[3];
 
@@ -94,13 +94,50 @@ int AnalyzePacket(int deviceNo, u_char *data, int size)
   }
 
   // Check My Protocol
+  if(ntohs(eh->ether_type)==MYPROTOCOL){
+    MYPROTO *myproto;
+    myproto=(MYPROTO *)ptr;
+    ptr+=sizeof(MYPROTO);
+    lest-=sizeof(MYPROTO);
+
+    switch(ntohs(myproto->type)){
+    case   OFFER:;
+      char offr_dMacAddr[18];
+      char offr_sMacAddr[18];
+      my_ether_ntoa_r(eh->ether_dhost, offr_dMacAddr, sizeof(offr_dMacAddr));
+      my_ether_ntoa_r(eh->ether_shost, offr_sMacAddr, sizeof(offr_sMacAddr));
+      
+      if(strncmp(offr_dMacAddr, dev1MacAddr, sizeof(offr_dMacAddr))==0){
+	strncpy(apMacAddr, offr_sMacAddr, SIZE_MAC);
+	memcpy(dev1IpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_dst), SIZE_IP);
+	memcpy(apIpAddr, inet_ntoa(*(struct in_addr *)&myproto->ip_src), SIZE_IP);
+	if(chgIfIp(NameDev1, inet_addr(dev1IpAddr))==0){
+	  DebugPrintf("Change IP Address\n%s IP: %s\n", NameDev1, dev1IpAddr);
+
+	  printf("Send Approval Packet\n");
+	  create_myprotocol(Device[MainDev].soc, dev1MacAddr, apMacAddr, dev1IpAddr, apIpAddr, APPROVAL);
+	  StatusFlag=STA_WAIT;
+	  
+	  return(-1);
+	}
+      }
+      break;
+    default:
+      break;
+    }
+  }
+
+
+
+  /*
   if(StatusFlag==STA_DISCOVER) {
     // Check Offer Packet
     if(chkMyProtocol(data, apMacAddr, dev1MacAddr, apIpAddr, dev1IpAddr, OFFER, size)==-1){
-      StatusFlag=STA_APPROVAL;
+      //StatusFlag=STA_APPROVAL;
       return(-1);
     }
   }
+  */
 
   return(0);
 }
@@ -265,23 +302,25 @@ int sendMyProtocol()
 	DebugPrintf("infoMyAp[%d].MacAddr: %s\n", i, InfoMyAp[i].MacAddr);
 	DebugPrintf("infoMyAp[%d].Quality: %d\n", i, InfoMyAp[i].Qual);
       }
- 
-      if(StatusFlag==STA_DISCOVER){
-	DebugPrintf("Send Discover Packet\n");
+      
+      switch(StatusFlag){
+      case   STA_DISCOVER:;
+	printf("Send Discover Packet\n");
 	
 	maxIndex=getMaxQualIndex(InfoMyAp, numMyAp);
 	DebugPrintf("maxIndex: %d\n", maxIndex);
-	
+	//memcpy(apMacAddr, InfoMyAp[maxIndex].MacAddr, SIZE_MAC);
 	create_myprotocol(Device[MainDev].soc, dev1MacAddr, InfoMyAp[maxIndex].MacAddr, sip, dip, DISCOVER);
-	
 	usleep(10000 * 100);
-      } else if(StatusFlag==STA_APPROVAL){
+	break;
+      case   STA_APPROVAL:;
 	DebugPrintf("Send Approval Pakcet\n");
 	
 	create_myprotocol(Device[MainDev].soc, dev1MacAddr, InfoMyAp[maxIndex].MacAddr, dev1IpAddr, apIpAddr, APPROVAL);
-	
 	StatusFlag=STA_WAIT;
 	SendFlag=OFF;
+      default:
+	break;
       }
     }
   }
@@ -470,10 +509,11 @@ int main(int argc, char *argv[], char *envp[])
 
   // Get Interface Infomation
   getIfMac(NameDev1, dev1MacAddr);
-  getIfIp(NameDev1, dev1IpAddr);
+  // getIfIp(NameDev1, dev1IpAddr);
   getIfMac(NameDev2, dev2MacAddr);
-  getIfIp(NameDev2, dev2IpAddr);
+  //getIfIp(NameDev2, dev2IpAddr);
   getIfMac(NameDev3, dev3MacAddr);
+  getIfIp(NameDev3, dev3IpAddr);
 
   // Init Socket
   if((Device[0].soc=InitRawSocket(NameDev1,1,0))==-1){
