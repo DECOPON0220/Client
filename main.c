@@ -88,7 +88,7 @@ int AnalyzePacket(int deviceNo, u_char *data, int size)
       if(strncmp(cliIpAddr, inet_ntoa(*(struct in_addr *)&iphdr->saddr), SIZE_IP)==0){
 	my_ether_ntoa_r(eh->ether_shost, cliMacAddr, sizeof(cliMacAddr));	
 	ClientMacFlag=ON;
-        DebugPrintf("cliMacAddr: %s\n", cliMacAddr);
+        printf("cliMacAddr: %s\n", cliMacAddr);
       }
     }
   }
@@ -127,18 +127,6 @@ int AnalyzePacket(int deviceNo, u_char *data, int size)
     }
   }
 
-
-
-  /*
-  if(StatusFlag==STA_DISCOVER) {
-    // Check Offer Packet
-    if(chkMyProtocol(data, apMacAddr, dev1MacAddr, apIpAddr, dev1IpAddr, OFFER, size)==-1){
-      //StatusFlag=STA_APPROVAL;
-      return(-1);
-    }
-  }
-  */
-
   return(0);
 }
 
@@ -160,89 +148,29 @@ int RewritePacket (int deviceNo, u_char *data, int size)
   ptr+=sizeof(struct ether_header);
   lest-=sizeof(struct ether_header);
 
-  char dMACaddr[18];
-  char sMACaddr[18];
+  char dMacAddr[18];
+  char sMacAddr[18];
   
   // Get dMAC, sMAC
-  my_ether_ntoa_r(eh->ether_dhost, dMACaddr, sizeof(dMACaddr));
-  my_ether_ntoa_r(eh->ether_shost, sMACaddr, sizeof(sMACaddr));
+  my_ether_ntoa_r(eh->ether_dhost, dMacAddr, sizeof(dMacAddr));
+  my_ether_ntoa_r(eh->ether_shost, sMacAddr, sizeof(sMacAddr));
   
-  // wirelessNIC -> physicalNIC
-  if(deviceNo==0){
-    my_ether_aton_r(dev3MacAddr, eh->ether_shost);
-    if(strncmp(dMACaddr, dev1MacAddr, SIZE_MAC)==0){
-      my_ether_aton_r(cliMacAddr, eh->ether_dhost);
-    }
-
-    // Case: IP
-    if (ntohs(eh->ether_type)==ETHERTYPE_IP) {
-      struct iphdr *iphdr;
-      u_char option[1500];
-      int optLen;
-	
-      iphdr=(struct iphdr *)ptr;
-      ptr+=sizeof(struct iphdr);
-      lest-=sizeof(struct iphdr);
-      
-      optLen=iphdr->ihl*4-sizeof(struct iphdr);
-      
-      if(optLen>0){
-	memcpy(option, ptr, optLen);
-	ptr+=optLen;
-	lest-=optLen;
-      }
-      
-      // Rewrite IP Address
-      if(iphdr->saddr==inet_addr(apIpAddr)){
-	iphdr->saddr=inet_addr(dev3IpAddr);
-      }
-      if(iphdr->daddr==inet_addr(dev1IpAddr)){
-	iphdr->daddr=inet_addr(cliIpAddr);
-      }
-      
-      iphdr->check=0;
-      iphdr->check=calcChecksum2((u_char *)iphdr, sizeof(struct iphdr), option, optLen);
-
-      // Case : TCP
-      if(iphdr->protocol==IPPROTO_TCP){
-	struct tcphdr *tcphdr;
-	
-	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
-	tcphdr=(struct tcphdr *)ptr;
-
-	tcphdr->check=0;
-	tcphdr->check=checkIPDATAchecksum(iphdr, ptr, len);
-      }
-      // Case : UDP
-      if(iphdr->protocol==IPPROTO_UDP){
-	struct udphdr* udphdr;
-	
-	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
-	udphdr=(struct udphdr *)ptr;
-	udphdr->check=0;
-      }
-    }
-
-    // physicalNIC -> wirelessNIC
-  } else if(deviceNo==1){
-    // Rewrite MAC Address
+  // physicalNIC -> wirelessNIC
+  if((strncmp(sMacAddr, cliMacAddr, SIZE_MAC)==0) &&
+     (strncmp(dMacAddr, dev3MacAddr, SIZE_MAC)==0)){
+    my_ether_aton_r(apMacAddr, eh->ether_dhost);
     my_ether_aton_r(dev1MacAddr, eh->ether_shost);
-    if(strncmp(dMACaddr, dev3MacAddr, SIZE_MAC)==0){
-      my_ether_aton_r(apMacAddr,eh->ether_dhost);
-    }
-
+    
     // Case: IP
     if (ntohs(eh->ether_type)==ETHERTYPE_IP) {
       struct iphdr *iphdr;
       u_char option[1500];
       int optLen;
-	
+      
       iphdr=(struct iphdr *)ptr;
       ptr+=sizeof(struct iphdr);
       lest-=sizeof(struct iphdr);
-      
       optLen=iphdr->ihl*4-sizeof(struct iphdr);
-      
       if(optLen>0){
 	memcpy(option, ptr, optLen);
 	ptr+=optLen;
@@ -253,20 +181,15 @@ int RewritePacket (int deviceNo, u_char *data, int size)
       if(iphdr->saddr==inet_addr(cliIpAddr)){
 	iphdr->saddr=inet_addr(dev1IpAddr);
       }
-      if(iphdr->daddr==inet_addr(dev3IpAddr)){
-	iphdr->daddr=inet_addr(apIpAddr);
-      }
-       
       iphdr->check=0;
       iphdr->check=calcChecksum2((u_char *)iphdr, sizeof(struct iphdr), option, optLen);
-
+      
       // Case : TCP
       if(iphdr->protocol==IPPROTO_TCP){
 	struct tcphdr *tcphdr;
 	
 	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
 	tcphdr=(struct tcphdr *)ptr;
-
 	tcphdr->check=0;
 	tcphdr->check=checkIPDATAchecksum(iphdr, ptr, len);
       }
@@ -280,7 +203,53 @@ int RewritePacket (int deviceNo, u_char *data, int size)
       }
     }
   }
-
+  // wirelessNIC -> physicalNIC
+  else if (strncmp(dMacAddr, dev1MacAddr, SIZE_MAC)==0) {
+    my_ether_aton_r(cliMacAddr, eh->ether_dhost);
+    my_ether_aton_r(dev3MacAddr, eh->ether_dhost);
+      
+    // Case: IP
+    if (ntohs(eh->ether_type)==ETHERTYPE_IP) {
+      struct iphdr *iphdr;
+      u_char option[1500];
+      int optLen;
+      
+      iphdr=(struct iphdr *)ptr;
+      ptr+=sizeof(struct iphdr);
+      lest-=sizeof(struct iphdr);
+      optLen=iphdr->ihl*4-sizeof(struct iphdr);
+      if(optLen>0){
+	memcpy(option, ptr, optLen);
+	ptr+=optLen;
+	lest-=optLen;
+      }
+      
+      // Rewrite IP Address
+      if(iphdr->daddr==inet_addr(dev1IpAddr)){
+	iphdr->daddr=inet_addr(cliIpAddr);
+      }
+      iphdr->check=0;
+      iphdr->check=calcChecksum2((u_char *)iphdr, sizeof(struct iphdr), option, optLen);
+      
+      // Case : TCP
+      if(iphdr->protocol==IPPROTO_TCP){
+	struct tcphdr *tcphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	tcphdr=(struct tcphdr *)ptr;
+	tcphdr->check=0;
+	tcphdr->check=checkIPDATAchecksum(iphdr, ptr, len);
+      }
+      // Case : UDP
+      if(iphdr->protocol==IPPROTO_UDP){
+	struct udphdr* udphdr;
+	
+	len=ntohs(iphdr->tot_len)-iphdr->ihl*4;
+	udphdr=(struct udphdr *)ptr;
+	udphdr->check=0;
+      }
+    }
+  }
   return(0);
 }
 
@@ -361,7 +330,6 @@ int Bridge()
 	    }
 	    else{
 	      if(AnalyzePacket(i,buf,size)!=-1 && RewritePacket(i,buf,size)!=-1){
-		/*
 		if(i==0){
 		  if((size=write(Device[2].soc,buf,size))<=0){
 		    //perror("write");
@@ -371,7 +339,6 @@ int Bridge()
 		    //perror("write");
 		  }
 		}
-		*/
 	      }
 	    }
 	  }
